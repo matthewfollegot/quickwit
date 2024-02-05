@@ -24,6 +24,7 @@ use quickwit_proto::ingest::IngestV2Error;
 use quickwit_proto::ServiceError;
 use quickwit_search::SearchError;
 use serde::{Deserialize, Serialize};
+use quickwit_index_management::IndexServiceError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElasticsearchError {
@@ -95,6 +96,26 @@ impl From<IngestV2Error> for ElasticsearchError {
 
         let reason = ErrorCause {
             reason: Some(ingest_error.to_string()),
+            caused_by: None,
+            root_cause: Vec::new(),
+            stack_trace: None,
+            suppressed: Vec::new(),
+            ty: None,
+            additional_details: Default::default(),
+        };
+        ElasticsearchError {
+            status,
+            error: reason,
+        }
+    }
+}
+
+impl From<IndexServiceError> for ElasticsearchError {
+    fn from(index_service_error: IndexServiceError) -> Self {
+        let status = index_service_error.error_code().to_http_status_code();
+
+        let reason = ErrorCause {
+            reason: Some(index_service_error.to_string()),
             caused_by: None,
             root_cause: Vec::new(),
             stack_trace: None,

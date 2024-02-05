@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 
 use super::super::TrackTotalHits;
 use super::MultiSearchHeader;
-use crate::elasticsearch_api::model::{default_elasticsearch_sort_order, SortField};
+use crate::elasticsearch_api::model::{default_elasticsearch_sort_order, IndexMultiDeleteHeader, SortField};
 use crate::simple_list::{from_simple_list, to_simple_list};
 
 #[serde_with::skip_serializing_none]
@@ -312,6 +312,20 @@ impl From<MultiSearchHeader> for SearchQueryParams {
             routing: multi_search_header.routing,
             request_cache: multi_search_header.request_cache,
             preference: multi_search_header.preference,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<IndexMultiDeleteHeader> for SearchQueryParams {
+    fn from(index_multi_delete_header: IndexMultiDeleteHeader) -> Self {
+        SearchQueryParams {
+            allow_no_indices: index_multi_delete_header.allow_no_indices,
+            expand_wildcards: index_multi_delete_header.expand_wildcards,
+            ignore_unavailable: index_multi_delete_header.ignore_unavailable,
+            routing: index_multi_delete_header.routing,
+            request_cache: index_multi_delete_header.request_cache,
+            preference: index_multi_delete_header.preference,
             ..Default::default()
         }
     }

@@ -20,6 +20,7 @@
 mod bulk_body;
 mod bulk_query_params;
 mod error;
+mod index_multi_delete;
 mod field_capability;
 mod multi_search;
 mod scroll;
@@ -33,6 +34,9 @@ pub use error::ElasticsearchError;
 pub use field_capability::{
     build_list_field_request_for_es_api, convert_to_es_field_capabilities_response,
     FieldCapabilityQueryParams, FieldCapabilityRequestBody, FieldCapabilityResponse,
+};
+pub use index_multi_delete::{
+    IndexMultiDeleteHeader, IndexMultiDeleteQueryParams, IndexMultiDeleteResponse, IndexMultiDeleteSingleResponse
 };
 pub use multi_search::{
     MultiSearchHeader, MultiSearchQueryParams, MultiSearchResponse, MultiSearchSingleResponse,

@@ -205,6 +205,7 @@ fn api_v1_routes(
                 quickwit_services.ingest_service.clone(),
                 quickwit_services.ingest_router_service.clone(),
                 quickwit_services.metastore_client.clone(),
+                quickwit_services.index_manager.clone(),
             )),
     )
 }

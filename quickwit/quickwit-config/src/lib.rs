@@ -159,6 +159,20 @@ pub fn validate_index_id_pattern(pattern: &str, allow_negative: bool) -> anyhow:
     Ok(())
 }
 
+/// Index delete requests do not support wildcard (`*`) matching.
+/// This simply checks if this is violated, and if not, calls `validate_index_id_pattern`.
+pub fn validate_delete_index_id_pattern(pattern: &str, allow_negative: bool) -> anyhow::Result<()> {
+    // Forbid wildcard matching on DELETE requests
+    if pattern.contains("*") {
+        bail!(
+            "index ID pattern `{pattern}` is invalid: patterns containing `*` \
+             in delete requests are forbidden"
+        );
+    };
+
+    validate_index_id_pattern(pattern, allow_negative)
+}
+
 pub fn validate_node_id(node_id: &str) -> anyhow::Result<()> {
     if !is_valid_hostname(node_id) {
         bail!(

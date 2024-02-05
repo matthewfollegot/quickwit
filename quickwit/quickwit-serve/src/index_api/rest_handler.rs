@@ -46,6 +46,7 @@ use warp::{Filter, Rejection};
 
 use crate::format::extract_format_from_qs;
 use crate::json_api_response::make_json_api_response;
+use crate::search_api::extract_index_id_patterns;
 use crate::simple_list::{from_simple_list, to_simple_list};
 use crate::with_arg;
 
@@ -543,12 +544,18 @@ struct DeleteIndexQueryParam {
     dry_run: bool,
 }
 
+fn delete_index_filter(
+) -> impl Filter<Extract = (Vec<String>, DeleteIndexQueryParam), Error = Rejection> + Clone {
+    warp::path!("indexes" / String)
+        .and_then(extract_index_id_patterns)
+        .and(warp::delete())
+        .and(serde_qs::warp::query(serde_qs::Config::default()))
+}
+
 fn delete_index_handler(
     index_service: IndexService,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
-    warp::path!("indexes" / String)
-        .and(warp::delete())
-        .and(serde_qs::warp::query(serde_qs::Config::default()))
+    delete_index_filter()
         .and(with_arg(index_service))
         .then(delete_index)
         .and(extract_format_from_qs())
@@ -570,15 +577,39 @@ fn delete_index_handler(
 )]
 /// Deletes index.
 async fn delete_index(
-    index_id: String,
+    index_id_patterns: Vec<String>,
     delete_index_query_param: DeleteIndexQueryParam,
     mut index_service: IndexService,
 ) -> Result<Vec<SplitInfo>, IndexServiceError> {
-    info!(index_id = %index_id, dry_run = delete_index_query_param.dry_run, "delete-index");
-    index_service
-        .delete_index(&index_id, delete_index_query_param.dry_run)
-        .await
+    let mut split_infos = Vec::with_capacity(index_id_patterns.len());
+    for index_id in index_id_patterns {
+        // todo need to query the metastore to get the index_uid
+        info!(index_id = %index_id, dry_run = delete_index_query_param.dry_run, "delete-index");
+        let split_info = index_service
+            .delete_index(&index_id, delete_index_query_param.dry_run)
+            .await?;
+        for split in split_info {
+            split_infos.push(split);
+        }
+    }
+    Ok(split_infos)
 }
+
+// async fn delete_indexes(
+//     index_id_patterns: Vec<String>,
+//     delete_index_query_param: DeleteIndexQueryParam,
+//     mut index_service: IndexService,
+// ) -> Result<Vec<Vec<SplitInfo>>, IndexServiceError> {
+//     let mut split_infos = Vec::with_capacity(index_id_patterns.len());
+//     for index_id in index_id_patterns {
+//         info!(index_id = %index_id, dry_run = delete_index_query_param.dry_run, "delete-index");
+//         let split_info = index_service
+//             .delete_index(&index_id, delete_index_query_param.dry_run)
+//             .await?;
+//         split_infos.push(split_info);
+//     }
+//     Ok(split_infos)
+// }
 
 fn create_source_handler(
     index_service: IndexService,

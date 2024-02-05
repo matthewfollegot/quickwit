@@ -23,51 +23,32 @@ use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_with::formats::PreferMany;
 use serde_with::{serde_as, OneOrMany};
-use crate::elasticsearch_api::model::IndexMultiDeleteQueryParams;
 
 use super::search_query_params::ExpandWildcards;
 use super::ElasticsearchError;
 use crate::simple_list::{from_simple_list, to_simple_list};
 
-// Multi search doc: https://www.elastic.co/guide/en/elasticsearch/reference/current/search-multi-search.html
+// Delete index api spec: https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-delete-index.html
 
 #[serde_with::skip_serializing_none]
-#[derive(Default, Debug, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct MultiSearchQueryParams {
+pub struct IndexMultiDeleteQueryParams {
+    #[serde(default)]
+    pub dry_run: bool,
     #[serde(default)]
     pub allow_no_indices: Option<bool>,
-    #[serde(default)]
-    pub ccs_minimize_roundtrips: Option<bool>,
     #[serde(serialize_with = "to_simple_list")]
     #[serde(deserialize_with = "from_simple_list")]
     #[serde(default)]
     pub expand_wildcards: Option<Vec<ExpandWildcards>>,
-    #[serde(default)]
-    pub ignore_throttled: Option<bool>,
-    #[serde(default)]
-    pub ignore_unavailable: Option<bool>,
-    #[serde(default)]
-    pub max_concurrent_searches: Option<u64>,
-    #[serde(default)]
-    pub max_concurrent_shard_requests: Option<i64>,
-    #[serde(default)]
-    pub pre_filter_shard_size: Option<i64>,
-    #[serde(default)]
-    pub rest_total_hits_as_int: Option<bool>,
-    #[serde(serialize_with = "to_simple_list")]
-    #[serde(deserialize_with = "from_simple_list")]
-    #[serde(default)]
-    pub routing: Option<Vec<String>>,
-    #[serde(default)]
-    pub typed_keys: Option<bool>,
 }
 
 #[serde_as]
 #[serde_with::skip_serializing_none]
 #[derive(Default, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct MultiSearchHeader {
+pub struct IndexMultiDeleteHeader {
     #[serde(default)]
     pub allow_no_indices: Option<bool>,
     #[serde(default)]
@@ -85,13 +66,23 @@ pub struct MultiSearchHeader {
     pub routing: Option<Vec<String>>,
 }
 
+impl From<IndexMultiDeleteHeader> for IndexMultiDeleteQueryParams {
+    fn from(header: IndexMultiDeleteHeader) -> Self {
+        IndexMultiDeleteQueryParams {
+            allow_no_indices: header.allow_no_indices,
+            expand_wildcards: header.expand_wildcards,
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
-pub struct MultiSearchResponse {
-    pub responses: Vec<MultiSearchSingleResponse>,
+pub struct IndexMultiDeleteResponse {
+    pub responses: Vec<IndexMultiDeleteSingleResponse>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct MultiSearchSingleResponse {
+pub struct IndexMultiDeleteSingleResponse {
     #[serde(with = "http_serde::status_code")]
     pub status: StatusCode,
     #[serde(default)]
@@ -103,19 +94,9 @@ pub struct MultiSearchSingleResponse {
     pub error: Option<ErrorCause>,
 }
 
-impl From<IndexMultiDeleteQueryParams> for MultiSearchQueryParams {
-    fn from(query_params: IndexMultiDeleteQueryParams) -> Self {
-        MultiSearchQueryParams {
-            allow_no_indices: query_params.allow_no_indices,
-            expand_wildcards: query_params.expand_wildcards,
-            ..Default::default()
-        }
-    }
-}
-
-impl From<ElasticsearchResponse> for MultiSearchSingleResponse {
+impl From<ElasticsearchResponse> for IndexMultiDeleteSingleResponse {
     fn from(response: ElasticsearchResponse) -> Self {
-        MultiSearchSingleResponse {
+        IndexMultiDeleteSingleResponse {
             status: StatusCode::OK,
             response: Some(response),
             error: None,
@@ -123,9 +104,9 @@ impl From<ElasticsearchResponse> for MultiSearchSingleResponse {
     }
 }
 
-impl From<ElasticsearchError> for MultiSearchSingleResponse {
+impl From<ElasticsearchError> for IndexMultiDeleteSingleResponse {
     fn from(error: ElasticsearchError) -> Self {
-        MultiSearchSingleResponse {
+        IndexMultiDeleteSingleResponse {
             status: error.status,
             response: None,
             error: Some(error.error),

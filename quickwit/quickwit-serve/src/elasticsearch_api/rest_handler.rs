@@ -24,12 +24,13 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use elasticsearch_dsl::search::{Hit as ElasticHit, SearchResponse as ElasticsearchResponse};
-use elasticsearch_dsl::{HitsMetadata, Source, TotalHits, TotalHitsRelation};
+use elasticsearch_dsl::{ErrorCause, HitsMetadata, Source, TotalHits, TotalHitsRelation};
 use futures_util::StreamExt;
 use hyper::StatusCode;
 use itertools::Itertools;
 use quickwit_common::truncate_str;
-use quickwit_config::{validate_index_id_pattern, NodeConfig};
+use quickwit_config::{validate_index_id_pattern, NodeConfig, validate_delete_index_id_pattern};
+use quickwit_index_management::IndexService;
 use quickwit_metastore::*;
 use quickwit_proto::metastore::MetastoreServiceClient;
 use quickwit_proto::search::{
@@ -44,6 +45,7 @@ use quickwit_search::{list_all_splits, resolve_index_patterns, SearchError, Sear
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use warp::{Filter, Rejection};
+use quickwit_index_management::IndexServiceError;
 
 use super::filter::{
     elastic_cluster_info_filter, elastic_field_capabilities_filter, elastic_index_count_filter,
@@ -62,6 +64,8 @@ use super::{make_elastic_api_response, TrackTotalHits};
 use crate::format::BodyFormat;
 use crate::json_api_response::{make_json_api_response, ApiError, JsonApiResponse};
 use crate::{with_arg, BuildInfo};
+use crate::elasticsearch_api::filter::elastic_index_multi_delete_filter;
+use crate::elasticsearch_api::model::{IndexMultiDeleteHeader, IndexMultiDeleteQueryParams, IndexMultiDeleteResponse, IndexMultiDeleteSingleResponse};
 
 /// Elastic compatible cluster info handler.
 pub fn es_compat_cluster_info_handler(
@@ -152,6 +156,146 @@ pub fn es_compat_index_count_handler(
         .and(with_arg(search_service))
         .then(es_compat_index_count)
         .map(|result| make_elastic_api_response(result, BodyFormat::default()))
+}
+
+/// DELETE _elastic/{index_pattern}
+pub fn es_compat_index_delete_handler(
+    index_service: IndexService,
+    search_service: Arc<dyn SearchService>,
+) -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
+    elastic_index_multi_delete_filter()
+        .and(with_arg(index_service))
+        .and(with_arg(search_service))
+        .then(es_compat_index_multi_delete)
+        .map(|result| make_elastic_api_response(result, BodyFormat::default()))
+}
+
+async fn es_compat_index_multi_delete(
+    payload: Bytes,
+    index_multi_delete_query_params: IndexMultiDeleteQueryParams,
+    mut index_service: IndexService,
+    search_service: Arc<dyn SearchService>,
+) -> Result<IndexMultiDeleteResponse, ElasticsearchError> {
+    // first search for indexes that match, then submit delete requests for them
+    let index_ids: Vec<String> = {
+        let str_payload = from_utf8(&payload)
+            .map_err(|err| SearchError::InvalidQuery(format!("invalid UTF-8: {}", err)))?;
+        let mut payload_lines = str_lines(str_payload);
+
+        let mut index_ids = Vec::new();
+        while let Some(line) = payload_lines.next() {
+            let request_header = serde_json::from_str::<IndexMultiDeleteHeader>(line).map_err(|err| {
+                IndexServiceError::InvalidArgument(format!(
+                    "failed to parse request header `{}...`: {}",
+                    truncate_str(line, 20),
+                    err
+                ))
+            })?;
+            if request_header.index.is_empty() {
+                return Err(ElasticsearchError::from(SearchError::InvalidArgument(
+                    "`_index` request header must define at least one index".to_string(),
+                )));
+            }
+            for index in &request_header.index {
+                validate_delete_index_id_pattern(index, true).map_err(|err| {
+                    IndexServiceError::InvalidArgument(format!(
+                        "request header contains an invalid index: {}",
+                        err
+                    ))
+                })?;
+            }
+            let index_ids_patterns = request_header.index.clone();
+            if !index_multi_delete_query_params.expand_wildcards.is_none() {
+                index_ids.extend(index_ids_patterns);
+            } else {
+                let search_body = payload_lines
+                    .next()
+                    .ok_or_else(|| {
+                        IndexServiceError::InvalidArgument("expect request body after request header".to_string())
+                    })
+                    .and_then(|line| {
+                        serde_json::from_str::<SearchBody>(line).map_err(|err| {
+                            IndexServiceError::InvalidArgument(format!(
+                                "failed to parse request body `{}...`: {}",
+                                truncate_str(line, 20),
+                                err
+                            ))
+                        })
+                    })?;
+                let search_query_params = SearchQueryParams::from(request_header);
+                let es_request =
+                    build_request_for_es_api(index_ids_patterns, search_query_params, search_body)?;
+                let search_requests = vec![es_request];
+                // TODO: forced to do weird referencing to work around https://github.com/rust-lang/rust/issues/100905
+                // otherwise append_shard_doc is captured by ref, and we get lifetime issues
+                let futures = search_requests
+                    .into_iter()
+                    .map(|(search_request, append_shard_doc)| {
+                        let search_service = &search_service;
+                        async move {
+                            let search_response: SearchResponse =
+                                search_service.clone().root_search(search_request).await?;
+                            let search_response_rest: ElasticsearchResponse =
+                                convert_to_es_search_response(search_response, append_shard_doc);
+                            Ok::<_, ElasticsearchError>(search_response_rest)
+                        }
+                    });
+                let multi_search_params = MultiSearchQueryParams::from(index_multi_delete_query_params.clone());
+                let max_concurrent_searches =
+                    multi_search_params.max_concurrent_searches.unwrap_or(10) as usize;
+                let search_response_results = futures::stream::iter(futures)
+                    .buffer_unordered(max_concurrent_searches)
+                    .collect::<Vec<_>>()
+                    .await;
+
+                let mut search_responses = vec![];
+                for search_response_result in search_response_results {
+                    match search_response_result {
+                        Ok(search_response) => search_responses.push(search_response),
+                        Err(err) => return Err(err),
+                    }
+                }
+
+                index_ids.extend(search_responses
+                    .iter()
+                    .flat_map(|search_response| {
+                        search_response.hits.hits.iter().map(|hit| hit.index.clone())
+                    }).collect_vec());
+            }
+        }
+        index_ids
+    };
+
+    // we have the matching index IDs, now we need to issue the delete requests.
+    let mut responses = vec![];
+    for index_id in index_ids {
+        let response = match index_service.delete_index(&index_id, index_multi_delete_query_params.dry_run).await {
+            // TODO complete this
+            Ok(_) => IndexMultiDeleteSingleResponse {
+                status: StatusCode::OK,
+                response: None,
+                error: None,
+            },
+            Err(error) => {
+                IndexMultiDeleteSingleResponse {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    response: None,
+                    error: Some(ErrorCause {
+                        root_cause: vec![],
+                        stack_trace: None,
+                        suppressed: vec![],
+                        ty: None,
+                        reason: Some(error.to_string()),
+                        caused_by: None,
+                        additional_details: Default::default(),
+                    }),
+                }
+            }
+        };
+        responses.push(response);
+    }
+
+    Ok(IndexMultiDeleteResponse { responses })
 }
 
 /// POST _elastic/_search

@@ -24,8 +24,8 @@ use warp::reject::LengthRequired;
 use warp::{Filter, Rejection};
 
 use super::model::{
-    FieldCapabilityQueryParams, FieldCapabilityRequestBody, MultiSearchQueryParams,
-    SearchQueryParamsCount,
+    FieldCapabilityQueryParams, FieldCapabilityRequestBody, IndexMultiDeleteQueryParams,
+    MultiSearchQueryParams, SearchQueryParamsCount,
 };
 use crate::elasticsearch_api::model::{
     ElasticBulkOptions, ScrollQueryParams, SearchBody, SearchQueryParams,
@@ -203,6 +203,16 @@ pub(crate) fn elastic_multi_search_filter(
         .and(warp::body::content_length_limit(BODY_LENGTH_LIMIT.as_u64()))
         .and(warp::body::bytes())
         .and(warp::post())
+        .and(serde_qs::warp::query(serde_qs::Config::default()))
+}
+
+#[utoipa::path(post, tag = "Indexes", path = "/_delete")]
+pub(crate) fn elastic_index_multi_delete_filter(
+) -> impl Filter<Extract = (Bytes, IndexMultiDeleteQueryParams), Error = Rejection> + Clone {
+    warp::path!("_elastic" / "_delete")
+        .and(warp::body::content_length_limit(BODY_LENGTH_LIMIT.as_u64()))
+        .and(warp::body::bytes())
+        .and(warp::delete())
         .and(serde_qs::warp::query(serde_qs::Config::default()))
 }
 

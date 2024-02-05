@@ -542,9 +542,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_index_id_patterns() {
-        extract_index_id_patterns("my-index".to_string())
+        assert_eq!(extract_index_id_patterns("my-index".to_string())
             .await
-            .unwrap();
+            .unwrap(),
+            vec!["my-index".to_string()]
+        );
         assert_eq!(
             extract_index_id_patterns("my-index-1,my-index-2%2A".to_string())
                 .await

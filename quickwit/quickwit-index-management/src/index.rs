@@ -60,6 +60,8 @@ pub enum IndexServiceError {
     OperationNotAllowed(String),
     #[error("internal error: {0}")]
     Internal(String),
+    #[error("Invalid argument: {0}")]
+    InvalidArgument(String),
 }
 
 impl ServiceError for IndexServiceError {
@@ -72,6 +74,7 @@ impl ServiceError for IndexServiceError {
             Self::OperationNotAllowed(_) => ServiceErrorCode::MethodNotAllowed,
             Self::SplitDeletion(_) => ServiceErrorCode::Internal,
             Self::Storage(_) => ServiceErrorCode::Internal,
+            Self::InvalidArgument(_) => ServiceErrorCode::BadRequest,
         }
     }
 }
